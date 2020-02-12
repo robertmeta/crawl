@@ -3209,8 +3209,12 @@ int player_stealth()
         stealth /= umbra_div;
     }
 
+    int mult = 1;
     if (you.form == transformation::shadow)
-        stealth *= 2;
+        mult++;
+    if (you.duration[DUR_CAMOUFLAGED] > 0)
+        mult++;
+    stealth *= mult;
 
     // If you're surrounded by a storm, you're inherently pretty conspicuous.
     if (have_passive(passive_t::storm_shield))

@@ -59,7 +59,7 @@
       local i = {}
       if s == "A" then i = { "arbalest", "book of alchemy", "book of air",
        "manual of air magic", "book of annihilations", "arrow",
-       "potion of agility", "potion of ambrosia", "scroll of acquirement q:1",
+       "potion of ambrosia", "scroll of acquirement q:1",
        "scroll of amnesia", "staff of air", "ring of attention",
        "manual of axes", "manual of armour", "wand of acid",
        "acid dragon scales" }
@@ -76,7 +76,8 @@
        "chain mail", "crystal ball of energy", "cloak", "crystal plate armour",
        "potion of cancellation", "book of clouds", "staff of cold",
        "staff of conjuration", "manual of crossbows", "manual of conjurations",
-       "manual of charms", "potion of curing", "wand of clouds" }
+       "manual of charms", "potion of curing", "wand of clouds",
+       "potion of camouflage" }
 
       elseif s == "D" then i = { "book of death", "book of debilitation",
        "book of dreams", "book of the dragon", "dagger", "demon blade",

@@ -561,6 +561,12 @@ static const duration_def duration_data[] =
       {{ "", []() {
           you.redraw_evasion = true;
       }}}},
+    { DUR_CAMOUFLAGED,
+      LIGHTBLUE, "Camo",
+      "camo", "camouflaged",
+      "You are camouflaged.", D_DISPELLABLE,
+      {{ "You feel a more obvious now.", }}},
+
     // The following are visible in wizmode only, or are handled
     // specially in the status lights and/or the % or @ screens.
 

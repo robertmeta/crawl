@@ -381,6 +381,29 @@ public:
     }
 };
 
+class PotionCamouflage : public PotionEffect
+{
+private:
+    PotionCamouflage() : PotionEffect(POT_CAMOUFLAGE) { }
+    DISALLOW_COPY_AND_ASSIGN(PotionCamouflage);
+public:
+    static const PotionCamouflage &instance()
+    {
+        static PotionCamouflage inst; return inst;
+    }
+
+    bool effect(bool=true, int pow = 40, bool=true) const override
+    {
+        const bool was_camoed = you.duration[DUR_CAMOUFLAGED] > 0;
+
+        mprf(MSGCH_DURATION, "You feel %ssneaky all of a sudden.",
+             was_camoed ? "more " : "");
+
+        you.increase_duration(DUR_CAMOUFLAGED, 35 + random2(pow), 80);
+        return true;
+    }
+};
+
 
 class PotionFlight : public PotionEffect
 {
@@ -1290,7 +1313,7 @@ static const PotionEffect* potion_effects[] =
     &PotionHaste::instance(),
     &PotionMight::instance(),
     &PotionBrilliance::instance(),
-    &PotionAgility::instance(),
+    &PotionCamouflage::instance(),
 #if TAG_MAJOR_VERSION == 34
     &PotionGainStrength::instance(),
     &PotionGainDexterity::instance(),
@@ -1332,6 +1355,7 @@ static const PotionEffect* potion_effects[] =
 #if TAG_MAJOR_VERSION == 34
     &PotionBeneficialMutation::instance(),
 #endif
+    &PotionAgility::instance(),
     &PotionStale::instance()
 };
 
