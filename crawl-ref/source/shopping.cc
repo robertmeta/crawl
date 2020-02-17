@@ -483,6 +483,7 @@ unsigned int item_value(item_def item, bool ident)
                 break;
 
             case POT_BERSERK_RAGE:
+            case POT_POTENCY:
             case POT_HEAL_WOUNDS:
 #if TAG_MAJOR_VERSION == 34
             case POT_RESTORE_ABILITIES:
@@ -490,9 +491,7 @@ unsigned int item_value(item_def item, bool ident)
                 valued += 50;
                 break;
 
-            case POT_MIGHT:
             case POT_STABBING:
-            case POT_BRILLIANCE:
                 valued += 40;
                 break;
 

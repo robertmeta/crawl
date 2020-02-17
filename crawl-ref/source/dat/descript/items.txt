@@ -668,11 +668,6 @@ potion of blood
 
 A potion containing the essence of life.
 %%%%
-potion of brilliance
-
-A potion which greatly increases the intelligence and spell power of one who
-drinks it.
-%%%%
 potion of cancellation
 
 A potion which ends most magical effects, good or bad, affecting one who drinks
@@ -720,10 +715,10 @@ potion of magic
 
 A valuable potion which grants an infusion of magical energy.
 %%%%
-potion of might
+potion of potency
 
-A potion which greatly increases the strength and physical power of one who
-drinks it.
+A potion which grants greatly increased strength in melee and skill at
+spellcasting.
 %%%%
 potion of mutation
 

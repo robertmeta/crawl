@@ -833,7 +833,8 @@ sky_blue
 i-curing POT_CURING POT_ID_FIRST
 i-heal-wounds POT_HEAL_WOUNDS
 i-haste POT_HASTE
-i-might POT_MIGHT
+i-potency POT_POTENCY
+# please remove POT_BRILLIANCE when TAG_MAJOR_VERSION is bumped
 i-brilliance POT_BRILLIANCE
 i-stabbing POT_STABBING
 # please remove these 3 when TAG_MAJOR_VERSION is bumped

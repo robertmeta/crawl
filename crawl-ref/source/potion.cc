@@ -307,30 +307,32 @@ public:
     }
 };
 
-class PotionMight : public PotionEffect
+class PotionPotency : public PotionEffect
 {
 private:
-    PotionMight() : PotionEffect(POT_MIGHT) { }
-    DISALLOW_COPY_AND_ASSIGN(PotionMight);
+    PotionPotency() : PotionEffect(POT_POTENCY) { }
+    DISALLOW_COPY_AND_ASSIGN(PotionPotency);
 public:
-    static const PotionMight &instance()
+    static const PotionPotency &instance()
     {
-        static PotionMight inst; return inst;
+        static PotionPotency inst; return inst;
     }
 
     bool effect(bool=true, int pow = 40, bool=true) const override
     {
-        const bool were_mighty = you.duration[DUR_MIGHT] > 0;
+        const bool were_potent = you.duration[DUR_MIGHT] > 0;
 
         mprf(MSGCH_DURATION, "You feel %s all of a sudden.",
-             were_mighty ? "mightier" : "very mighty");
-        you.increase_duration(DUR_MIGHT, 35 + random2(pow), 80);
-        if (!were_mighty)
-            notify_stat_change(STAT_STR, 5, true);
+             were_potent ? "more potent" : "potent");
+        you.increase_duration(DUR_BRILLIANCE, 35 + random2(pow), 80);
+        if (!were_potent)
+            notify_stat_change(STAT_INT, 5, true);
+        you.be_mighty(pow, false);
         return true;
     }
 };
 
+#if TAG_MAJOR_VERSION == 34
 class PotionBrilliance : public PotionEffect
 {
 private:
@@ -354,6 +356,7 @@ public:
         return true;
     }
 };
+#endif
 
 class PotionStabbing : public PotionEffect
 {
@@ -1285,8 +1288,10 @@ static const PotionEffect* potion_effects[] =
     &PotionCuring::instance(),
     &PotionHealWounds::instance(),
     &PotionHaste::instance(),
-    &PotionMight::instance(),
+    &PotionPotency::instance(),
+#if TAG_MAJOR_VERSION == 34
     &PotionBrilliance::instance(),
+#endif
     &PotionStabbing::instance(),
 #if TAG_MAJOR_VERSION == 34
     &PotionGainStrength::instance(),

@@ -8393,6 +8393,19 @@ bool player::immune_to_hex(const spell_type hex) const
     }
 }
 
+// Activate DUR_MIGHT.
+void player::be_mighty(int pow, bool show_messages) {
+    const bool were_mighty = you.duration[DUR_MIGHT] > 0;
+    if (show_messages) {
+        mprf(MSGCH_DURATION, "You feel %s all of a sudden.",
+             were_mighty ? "mightier" : "very mighty");
+    }
+
+    you.increase_duration(DUR_MIGHT, 35 + random2(pow), 80);
+    if (!were_mighty)
+        notify_stat_change(STAT_STR, 5, true);
+}
+
 // Activate DUR_AGILE.
 void player::be_agile(int pow) {
     const bool were_agile = you.duration[DUR_AGILITY] > 0;

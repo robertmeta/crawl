@@ -50,7 +50,7 @@ and are equipped with an enchanted dagger.
 Fighter
 
 Fighters are equipped with armour and shield, as well as a weapon of their
-choice and a potion of might.
+choice and a potion of potency.
 %%%%
 Fire Elementalist
 

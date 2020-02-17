@@ -5,8 +5,10 @@ enum potion_type
     POT_CURING,
     POT_HEAL_WOUNDS,
     POT_HASTE,
-    POT_MIGHT,
+    POT_POTENCY,
+#if TAG_MAJOR_VERSION == 34
     POT_BRILLIANCE,
+#endif
     POT_STABBING,
 #if TAG_MAJOR_VERSION == 34
     POT_GAIN_STRENGTH,

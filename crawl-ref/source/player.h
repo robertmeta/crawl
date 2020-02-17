@@ -863,6 +863,7 @@ public:
                                 killer_type killer = KILL_NONE,
                                 int killernum = -1) override;
 
+    void be_mighty(int pow, bool show_messages = true);
     void be_agile(int pow);
 
     ////////////////////////////////////////////////////////////////

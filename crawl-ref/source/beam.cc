@@ -3182,7 +3182,7 @@ void bolt::affect_player_enchantment(bool resistible)
         break;
 
     case BEAM_MIGHT:
-        potionlike_effect(POT_MIGHT, ench_power);
+        you.be_mighty(ench_power);
         obvious_effect = true;
         nasty = false;
         nice  = true;
