@@ -1,0 +1,274 @@
+:root {
+  color-scheme: light dark;
+  --bg: #0f1115;
+  --panel: #171b22;
+  --panel-strong: #222936;
+  --text: #f2f4f8;
+  --muted: #b8c0cc;
+  --accent: #8fd3c7;
+  --danger: #ff8a80;
+  --border: #343c4a;
+  font-family: "DejaVu Sans", "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+a,
+button {
+  color: inherit;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-strong);
+  color: var(--text);
+  cursor: pointer;
+  padding: 0.45rem 0.65rem;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+label {
+  display: block;
+  font-weight: 700;
+  margin-block-end: 0.25rem;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #080a0d;
+  color: var(--text);
+  padding: 0.55rem 0.65rem;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: minmax(18rem, 24rem) minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.sidebar,
+.main {
+  padding: 1rem;
+}
+
+.sidebar {
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.main {
+  display: grid;
+  gap: 1rem;
+  align-content: start;
+}
+
+.panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 1rem;
+}
+
+.stack {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.game-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.game-heading h2 {
+  margin-block-start: 0;
+}
+
+.game-input {
+  margin-block-start: 1rem;
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  background: #080a0d;
+  padding: 0.75rem;
+}
+
+.game-input:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.text-areas {
+  display: grid;
+  gap: 1rem;
+}
+
+.text-area h3 {
+  margin-block: 0 0.5rem;
+}
+
+.text-area pre {
+  max-height: 50vh;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #080a0d;
+  color: var(--text);
+  padding: 0.75rem;
+  font-family: "DejaVu Sans Mono", ui-monospace, monospace;
+  line-height: 1.35;
+  white-space: pre;
+}
+
+.tile-map-panel {
+  overflow: hidden;
+}
+
+.tile-map-frame {
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #000;
+}
+
+.tile-map {
+  display: block;
+  image-rendering: pixelated;
+}
+
+.game-ui {
+  display: grid;
+  gap: 1rem;
+}
+
+.game-ui h3,
+.choice-group h4 {
+  margin-block: 0 0.5rem;
+}
+
+.choice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 0.65rem;
+}
+
+.choice-button {
+  display: grid;
+  gap: 0.35rem;
+  text-align: left;
+}
+
+.choice-button.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.choice-description {
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.player-summary {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.35rem 0.75rem;
+  margin: 0;
+}
+
+.player-summary dt {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.player-summary dd {
+  margin: 0;
+}
+
+.status-line {
+  color: var(--muted);
+  margin: 0;
+}
+
+.error {
+  color: var(--danger);
+}
+
+.messages {
+  display: grid;
+  gap: 0.35rem;
+  max-height: 40vh;
+  overflow: auto;
+  font-family: "DejaVu Sans Mono", ui-monospace, monospace;
+  white-space: pre-wrap;
+}
+
+.message {
+  margin: 0;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .game-heading {
+    display: grid;
+  }
+}

@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Accessible WebTiles - Dungeon Crawl Stone Soup</title>
+    <link rel="icon" href="/static/stone_soup_icon-32x32.png" type="image/png">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script>
+      window.CRAWL_ACCESSIBLE_CONFIG = {
+        socketServer: "{{ socket_server }}",
+        gameVersion: "{{ game_version }}"
+      };
+    </script>
+    <link rel="stylesheet" href="/static/accessible/app.css?v={{ asset_version }}">
+    <script type="module" src="/static/accessible/app.js?v={{ asset_version }}"></script>
+  </head>
+  <body>
+    <noscript>Please enable JavaScript to use WebTiles.</noscript>
+    <div id="accessible-root"></div>
+  </body>
+</html>

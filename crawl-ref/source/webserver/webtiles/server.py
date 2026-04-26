@@ -65,6 +65,26 @@ class MainHandler(tornado.web.RequestHandler):
                     config = config,
                     reset_token = recovery_token, reset_token_error = recovery_token_error)
 
+class AccessibleMainHandler(MainHandler):
+    def get(self):
+        host = self.request.host
+        if self.request.protocol == "https" or self.request.headers.get("x-forwarded-proto") == "https":
+            protocol = "wss://"
+        else:
+            protocol = "ws://"
+
+        asset_version = _crawl_version
+        try:
+            app_path = os.path.join(config.get('static_path'), "accessible", "app.js")
+            asset_version = "%s-%d" % (_crawl_version, int(os.path.getmtime(app_path)))
+        except OSError:
+            pass
+
+        self.render("accessible_client.html",
+                    socket_server = protocol + host + "/socket",
+                    game_version = _crawl_version,
+                    asset_version = asset_version)
+
 class NoCacheHandler(tornado.web.StaticFileHandler):
     def set_extra_headers(self, path):
         self.set_header("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -277,6 +297,7 @@ def bind_server(nonsecure_sockets, secure_sockets):
 
     handlers = [
             (r"/", MainHandler),
+            (r"/accessible", AccessibleMainHandler),
             (r"/socket", ws_handler.CrawlWebSocket),
             (r"/gamedata/([0-9a-f]*\/.*)", game_data_handler.GameDataHandler),
             (r"/status/lobby/", status.LobbyHandler),
