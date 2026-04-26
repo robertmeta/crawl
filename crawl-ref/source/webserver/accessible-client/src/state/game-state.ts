@@ -40,6 +40,16 @@ export type StaleProcessPrompt = {
   timeout: number;
 };
 
+export type TextInputPrompt = {
+  source: "init_input" | "title_prompt";
+  type: string;
+  tag: string;
+  prompt: string;
+  value: string;
+  maxLength: number | null;
+  selectOnOpen: boolean;
+};
+
 export type GameUiButton = {
   label: string;
   description: string;
@@ -47,6 +57,11 @@ export type GameUiButton = {
   menuId: string;
   x: number;
   y: number;
+};
+
+export type GameUiAction = {
+  label: string;
+  hotkey: number | null;
 };
 
 export type GameUiGroup = {
@@ -60,6 +75,9 @@ export type GameUiPanel = {
   type: string;
   title: string;
   prompt: string;
+  body: string;
+  actions: string;
+  actionButtons: GameUiAction[];
   groups: GameUiGroup[];
   focusedHotkey: number | null;
 };
@@ -166,6 +184,7 @@ export type AccessibleGameState = {
   lastUnhandledMessage: BackendMessageLogEntry | null;
   staleProcess: StaleProcessPrompt | null;
   forceTerminatePrompt: StaleProcessPrompt | null;
+  textInputPrompt: TextInputPrompt | null;
   currentUser: string | null;
   isAdmin: boolean;
   isInGame: boolean;
@@ -184,6 +203,7 @@ export type AccessibleGameState = {
   textAreas: Record<string, Record<string, string>>;
   uiStack: GameUiPanel[];
   activeMenu: GameMenu | null;
+  activeCrtMenuTag: string | null;
   menuStack: GameMenu[];
   inventory: InventoryItem[];
   player: PlayerSummary | null;
@@ -205,6 +225,7 @@ function createInitialState(): AccessibleGameState {
     lastUnhandledMessage: null,
     staleProcess: null,
     forceTerminatePrompt: null,
+    textInputPrompt: null,
     currentUser: null,
     isAdmin: false,
     isInGame: false,
@@ -227,6 +248,7 @@ function createInitialState(): AccessibleGameState {
     textAreas: {},
     uiStack: [],
     activeMenu: null,
+    activeCrtMenuTag: null,
     menuStack: [],
     inventory: [],
     player: null,
@@ -244,6 +266,7 @@ let nextMessageId = 1;
 let nextBackendMessageId = 1;
 
 const MAX_BACKEND_MESSAGES = 250;
+const MENU_ARROWS_SELECT = 0x40000;
 const HANDLED_BACKEND_MESSAGES = new Set([
   "admin_log",
   "admin_pw_reset_done",
@@ -257,6 +280,7 @@ const HANDLED_BACKEND_MESSAGES = new Set([
   "client_path",
   "close",
   "close_all_menus",
+  "close_input",
   "close_menu",
   "cursor",
   "delay",
@@ -269,6 +293,7 @@ const HANDLED_BACKEND_MESSAGES = new Set([
   "go_admin",
   "go_lobby",
   "html",
+  "init_input",
   "input_mode",
   "layout",
   "layer",
@@ -302,6 +327,7 @@ const HANDLED_BACKEND_MESSAGES = new Set([
   "start_change_password",
   "super_hide_chat",
   "text_cursor",
+  "title_prompt",
   "toggle_chat",
   "txt",
   "ui-push",
@@ -310,6 +336,7 @@ const HANDLED_BACKEND_MESSAGES = new Set([
   "ui-state",
   "ui_cutoff",
   "ui_state",
+  "update_input",
   "update_menu",
   "update_menu_items",
   "update_spectators",
@@ -335,6 +362,19 @@ export function createAccessibleGameState() {
   const addError = (error: string) => {
     setState("errors", (errors) => [...errors, error]);
     setState("lastAnnouncement", error);
+  };
+
+  const announceMenuSelection = (menu: GameMenu | null) => {
+    const announcement = menu ? describeSelectedMenuItem(menu) : "";
+    if (announcement) {
+      setState("lastAnnouncement", announcement);
+    }
+  };
+
+  const clearTextArea = (id: string) => {
+    setState("textAreas", produce((areas) => {
+      delete areas[id];
+    }));
   };
 
   const applyMessage = (message: CrawlMessage) => {
@@ -381,6 +421,8 @@ export function createAccessibleGameState() {
         setState("uiStack", []);
         setState("menuStack", []);
         setState("activeMenu", null);
+        setState("activeCrtMenuTag", null);
+        setState("textInputPrompt", null);
         setState("inventory", []);
         setState("textAreas", {});
         setState("mapCells", {});
@@ -424,6 +466,8 @@ export function createAccessibleGameState() {
         setState("uiStack", []);
         setState("menuStack", []);
         setState("activeMenu", null);
+        setState("activeCrtMenuTag", null);
+        setState("textInputPrompt", null);
         break;
       case "rcfile_contents":
         setState("rcFile", {
@@ -432,6 +476,39 @@ export function createAccessibleGameState() {
         });
         setState("lastAnnouncement", `Editing rc file for ${stringField(message, "game_id")}.`);
         break;
+      case "init_input": {
+        const prompt = textInputPromptFromMessage(message, "init_input");
+        setState("textInputPrompt", prompt);
+        setState("lastAnnouncement", prompt.prompt);
+        break;
+      }
+      case "update_input":
+        if (state.textInputPrompt) {
+          setState("textInputPrompt", {
+            ...state.textInputPrompt,
+            value: stringField(message, "input_text", state.textInputPrompt.value),
+            selectOnOpen: Boolean(message.select)
+          });
+        }
+        break;
+      case "close_input":
+        setState("textInputPrompt", null);
+        break;
+      case "title_prompt":
+        if (Boolean(message.close)) {
+          setState("textInputPrompt", null);
+          break;
+        }
+        if (Boolean(message.raw)) {
+          setState("lastAnnouncement", "Raw key input mode.");
+          break;
+        }
+        {
+          const prompt = textInputPromptFromMessage(message, "title_prompt");
+          setState("textInputPrompt", prompt);
+          setState("lastAnnouncement", prompt.prompt);
+        }
+        break;
       case "msgs":
         if (numberField(message, "rollback") || numberField(message, "old_msgs")) {
           const removeCount = numberField(message, "rollback") || numberField(message, "old_msgs") || 0;
@@ -439,19 +516,21 @@ export function createAccessibleGameState() {
         }
         if (isTextMessageArray(message.messages)) {
           const newMessages = message.messages;
+          const spokenMessages = newMessages
+            .map((item) => htmlToText(item.text))
+            .filter(Boolean);
           setState("messages", (messages) => [
             ...messages,
-            ...newMessages.map((item) => ({ id: nextMessageId++, text: htmlToText(item.text) }))
+            ...spokenMessages.map((text) => ({ id: nextMessageId++, text }))
           ].slice(-500));
-          const last = newMessages.at(-1);
-          if (last) {
-            pendingCrawlAnnouncement = htmlToText(last.text);
+          if (spokenMessages.length > 0) {
+            pendingCrawlAnnouncement = spokenMessages.join(" ");
             setState("lastAnnouncement", pendingCrawlAnnouncement);
           }
         }
         setState("morePrompt", message.more ? stringField(message, "more_text", "--more--") : null);
         if (message.more) {
-          pendingCrawlAnnouncement = stringField(message, "more_text", "--more--");
+          pendingCrawlAnnouncement = combineAnnouncements(pendingCrawlAnnouncement, stringField(message, "more_text", "--more--"));
           setState("lastAnnouncement", pendingCrawlAnnouncement);
         }
         break;
@@ -477,6 +556,7 @@ export function createAccessibleGameState() {
         const panel = uiPanelFromMessage(message);
         setState("uiStack", (stack) => [...stack, panel]);
         setState("activeMenu", null);
+        setState("activeCrtMenuTag", null);
         setState("lastAnnouncement", panel.title || "Game menu opened.");
         break;
       }
@@ -487,26 +567,37 @@ export function createAccessibleGameState() {
         setState("uiStack", uiStackFromMessage(message));
         break;
       case "menu": {
+        if (stringField(message, "type") === "crt") {
+          setState("menuStack", []);
+          setState("activeMenu", null);
+          setState("activeCrtMenuTag", stringField(message, "tag", "menu_txt"));
+          setState("uiStack", []);
+          setState("lastAnnouncement", "Text menu opened.");
+          break;
+        }
         const nextMenu = gameMenuFromMessage(message);
         const nextStack = Boolean(message.replace)
           ? [...state.menuStack.slice(0, -1), nextMenu]
           : [...state.menuStack, nextMenu];
         setState("menuStack", nextStack);
         setState("activeMenu", nextMenu);
+        setState("activeCrtMenuTag", null);
         setState("uiStack", []);
-        setState("lastAnnouncement", `${nextMenu.title || "Menu"} opened. ${nextMenu.totalItems} rows.`);
+        setState("lastAnnouncement", describeMenuOpen(nextMenu));
         break;
       }
       case "update_menu": {
         const nextStack = updateTopMenu(state.menuStack, (menu) => updateMenuFromMessage(menu, message));
         setState("menuStack", nextStack);
         setState("activeMenu", nextStack.at(-1) ?? null);
+        announceMenuSelection(nextStack.at(-1) ?? null);
         break;
       }
       case "update_menu_items": {
         const nextStack = updateTopMenu(state.menuStack, (menu) => updateMenuItemsFromMessage(menu, message));
         setState("menuStack", nextStack);
         setState("activeMenu", nextStack.at(-1) ?? null);
+        announceMenuSelection(nextStack.at(-1) ?? null);
         break;
       }
       case "menu_scroll": {
@@ -514,10 +605,11 @@ export function createAccessibleGameState() {
           ...menu,
           firstVisible: numberField(message, "first") ?? menu.firstVisible,
           lastVisible: numberField(message, "last") ?? menu.lastVisible,
-          lastHovered: numberField(message, "last_hovered") ?? menu.lastHovered
+          lastHovered: numberField(message, "last_hovered") ?? numberField(message, "hover") ?? menu.lastHovered
         }));
         setState("menuStack", nextStack);
         setState("activeMenu", nextStack.at(-1) ?? null);
+        announceMenuSelection(nextStack.at(-1) ?? null);
         break;
       }
       case "ui-state":
@@ -646,11 +738,17 @@ export function createAccessibleGameState() {
         const nextStack = state.menuStack.slice(0, -1);
         setState("menuStack", nextStack);
         setState("activeMenu", nextStack.at(-1) ?? null);
+        setState("activeCrtMenuTag", null);
+        setState("textInputPrompt", null);
+        clearTextArea("menu_txt");
         break;
       }
       case "close_all_menus":
         setState("menuStack", []);
         setState("activeMenu", null);
+        setState("activeCrtMenuTag", null);
+        setState("textInputPrompt", null);
+        clearTextArea("menu_txt");
         break;
       case "layer":
         setState("activeLayer", stringField(message, "layer"));
@@ -703,6 +801,21 @@ function staleProcessPromptFromMessage(message: CrawlMessage): StaleProcessPromp
   };
 }
 
+function textInputPromptFromMessage(message: CrawlMessage, source: TextInputPrompt["source"]): TextInputPrompt {
+  const prompt = htmlToText(stringField(message, "prompt"), { preserveWhitespace: true })
+    || (source === "title_prompt" ? "Select what? (regex)" : "Input here. Escape cancels.");
+  const prefill = stringField(message, "prefill");
+  return {
+    source,
+    type: stringField(message, "type", source === "title_prompt" ? "menu" : "generic"),
+    tag: stringField(message, "tag"),
+    prompt,
+    value: source === "init_input" ? prefill.trim() : "",
+    maxLength: numberField(message, "maxlen") ?? null,
+    selectOnOpen: Boolean(message.select_prefill)
+  };
+}
+
 function uiStackFromMessage(message: CrawlMessage): GameUiPanel[] {
   const items = arrayField(message, "items");
   return items
@@ -712,17 +825,92 @@ function uiStackFromMessage(message: CrawlMessage): GameUiPanel[] {
 }
 
 function uiPanelFromMessage(message: CrawlMessage): GameUiPanel {
+  const rawBody = uiPanelBodyFromMessage(message);
+  const spellset = spellsetTextFromValue(message.spellset);
+  const body = rawBody.includes("SPELLSET_PLACEHOLDER")
+    ? rawBody.replace("SPELLSET_PLACEHOLDER", spellset)
+    : [rawBody, spellset].filter(Boolean).join("\n\n");
+  const actions = htmlToText(stringField(message, "actions"), { preserveWhitespace: true });
+
   return {
     generationId: numberField(message, "generation_id") ?? null,
     type: stringField(message, "type", "unknown"),
     title: htmlToText(stringField(message, "title")),
     prompt: htmlToText(stringField(message, "prompt")),
+    body,
+    actions,
+    actionButtons: uiActionsFromText(actions),
     groups: [
       uiGroupFromValue("Primary choices", message["main-items"]),
       uiGroupFromValue("Secondary choices", message["sub-items"])
     ].filter((group): group is GameUiGroup => Boolean(group && group.buttons.length > 0)),
     focusedHotkey: null
   };
+}
+
+function uiPanelBodyFromMessage(message: CrawlMessage): string {
+  const fields = ["body", "footer", "text", "desc"];
+  return fields
+    .map((field) => htmlToText(stringField(message, field), { preserveWhitespace: true }))
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function spellsetTextFromValue(value: unknown): string {
+  if (!Array.isArray(value)) {
+    return "";
+  }
+
+  return value
+    .map((book) => {
+      const source = recordFromUnknown(book);
+      if (!source) {
+        return "";
+      }
+      const label = htmlToText(stringFromUnknown(source.label), { preserveWhitespace: true });
+      const spells = Array.isArray(source.spells)
+        ? source.spells.map(spellTextFromValue).filter(Boolean)
+        : [];
+      return [label, ...spells].filter(Boolean).join("\n");
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function spellTextFromValue(value: unknown): string {
+  const source = recordFromUnknown(value);
+  if (!source) {
+    return "";
+  }
+
+  const letter = htmlToText(stringFromUnknown(source.letter));
+  const title = htmlToText(stringFromUnknown(source.title));
+  const level = numberFromUnknown(source.level);
+  const schools = htmlToText(stringFromUnknown(source.schools));
+  const effect = htmlToText(stringFromUnknown(source.effect));
+  const range = htmlToText(stringFromUnknown(source.range_string));
+  const details = [
+    level === undefined ? "" : `level ${level}`,
+    schools,
+    effect,
+    range
+  ].filter(Boolean).join(", ");
+  const prefix = letter ? `${letter} - ` : "";
+  return `${prefix}${title}${details ? ` (${details})` : ""}`.trim();
+}
+
+function uiActionsFromText(actions: string): GameUiAction[] {
+  return actions
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((label) => {
+      const hotkey = label.match(/\((.)\)/)?.[1] ?? null;
+      return {
+        label,
+        hotkey: hotkey ? hotkey.charCodeAt(0) : null
+      };
+    });
 }
 
 function uiGroupFromValue(label: string, value: unknown): GameUiGroup | null {
@@ -818,7 +1006,7 @@ function updateMenuItems(menu: GameMenu, chunkStart: number, items: unknown[]): 
   const byIndex = new Map(menu.items.map((item) => [item.index, item]));
   for (const [offset, value] of items.entries()) {
     const index = chunkStart + offset;
-    const item = gameMenuItemFromValue(value, index, menu.tag);
+    const item = gameMenuItemFromValue(value, index, menu.tag, menu.flags);
     if (item) {
       byIndex.set(index, item);
     }
@@ -829,7 +1017,23 @@ function updateMenuItems(menu: GameMenu, chunkStart: number, items: unknown[]): 
   };
 }
 
-function gameMenuItemFromValue(value: unknown, index: number, tag: string): GameMenuItem | null {
+function describeMenuOpen(menu: GameMenu): string {
+  const selected = describeSelectedMenuItem(menu);
+  const title = menu.title || "Menu";
+  return selected
+    ? `${title} opened. ${selected}`
+    : `${title} opened. ${menu.totalItems} rows.`;
+}
+
+function describeSelectedMenuItem(menu: GameMenu): string {
+  const item = menu.items.find((item) => item.index === menu.lastHovered);
+  if (!item?.text) {
+    return "";
+  }
+  return `Selected ${item.text}.`;
+}
+
+function gameMenuItemFromValue(value: unknown, index: number, tag: string, flags: number): GameMenuItem | null {
   const raw = typeof value === "string" ? { text: value, level: 2 } : recordFromUnknown(value);
   if (!raw) {
     return null;
@@ -839,7 +1043,11 @@ function gameMenuItemFromValue(value: unknown, index: number, tag: string): Game
   const hotkeys = Array.isArray(raw.hotkeys)
     ? raw.hotkeys.filter((hotkey): hotkey is number => typeof hotkey === "number")
     : [];
-  const selectable = level === 2 && (tag === "use_item" || hotkeys.length > 0);
+  const selectable = level === 2 && (
+    (flags & MENU_ARROWS_SELECT) !== 0
+    || tag === "use_item"
+    || hotkeys.length > 0
+  );
   return {
     index,
     level,

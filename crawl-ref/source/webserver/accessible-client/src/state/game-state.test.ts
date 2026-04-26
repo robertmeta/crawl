@@ -216,6 +216,44 @@ describe("createAccessibleGameState", () => {
     });
   });
 
+  it("announces all new Crawl messages in one backend message batch", () => {
+    runWithState((state, applyMessage) => {
+      applyMessage({
+        msg: "msgs",
+        messages: [
+          { text: "You hit the goblin." },
+          { text: "The goblin hits you." },
+          { text: "<span class='fg14'>You block the attack.</span>" }
+        ]
+      });
+
+      expect(state.messages.map((message) => message.text)).toEqual([
+        "You hit the goblin.",
+        "The goblin hits you.",
+        "You block the attack."
+      ]);
+      expect(state.lastAnnouncement).toBe(
+        "You hit the goblin. The goblin hits you. You block the attack."
+      );
+    });
+  });
+
+  it("appends more prompts to batched Crawl message announcements", () => {
+    runWithState((state, applyMessage) => {
+      applyMessage({
+        msg: "msgs",
+        messages: [
+          { text: "You read the scroll." },
+          { text: "It crumbles to dust." }
+        ],
+        more: true,
+        more_text: "--more--"
+      });
+
+      expect(state.lastAnnouncement).toBe("You read the scroll. It crumbles to dust. --more--");
+    });
+  });
+
   it("records handled and unhandled backend message types in state", () => {
     runWithState((state, applyMessage) => {
       applyMessage({ msg: "layout", message_pane: { height: 10 } });
@@ -294,6 +332,7 @@ describe("createAccessibleGameState", () => {
         tag: "inventory",
         title: { text: "Inventory" },
         total_items: 3,
+        last_hovered: 1,
         chunk_start: 0,
         items: [
           { level: 1, text: "Weapons" },
@@ -308,6 +347,7 @@ describe("createAccessibleGameState", () => {
         selectable: true,
         hotkeys: [97]
       });
+      expect(state.lastAnnouncement).toBe("Inventory opened. Selected a - a +0 short sword.");
 
       applyMessage({
         msg: "update_menu_items",
@@ -323,8 +363,144 @@ describe("createAccessibleGameState", () => {
         "b - 3 stones"
       ]);
 
+      applyMessage({ msg: "menu_scroll", first: 0, last: 2, last_hovered: 2 });
+      expect(state.lastAnnouncement).toBe("Selected b - 3 stones.");
+
       applyMessage({ msg: "close_menu" });
       expect(state.activeMenu).toBeNull();
+    });
+  });
+
+  it("marks arrow-select stash rows as selectable without hotkeys", () => {
+    runWithState((state, applyMessage) => {
+      applyMessage({
+        msg: "menu",
+        tag: "stash",
+        title: { text: "1 match: travel" },
+        flags: 0x40000 | 0x0002,
+        total_items: 1,
+        last_hovered: 0,
+        items: [
+          { level: 2, text: "[D:2] stone staircase down" }
+        ]
+      });
+
+      expect(state.activeMenu?.items[0]).toMatchObject({
+        selectable: true,
+        hotkeys: []
+      });
+      expect(state.lastAnnouncement).toBe("1 match: travel opened. Selected [D:2] stone staircase down.");
+    });
+  });
+
+  it("tracks CRT text menus separately and clears their backing text on close", () => {
+    runWithState((state, applyMessage) => {
+      applyMessage({ msg: "menu", type: "crt", tag: "menu_txt" });
+      applyMessage({
+        msg: "txt",
+        id: "menu_txt",
+        lines: {
+          "0": "Raw text menu"
+        }
+      });
+
+      expect(state.activeMenu).toBeNull();
+      expect(state.activeCrtMenuTag).toBe("menu_txt");
+      expect(state.textAreas.menu_txt).toEqual({ "0": "Raw text menu" });
+
+      applyMessage({ msg: "close_menu" });
+
+      expect(state.activeCrtMenuTag).toBeNull();
+      expect(state.textAreas.menu_txt).toBeUndefined();
+    });
+  });
+
+  it("opens and updates modal text prompts", () => {
+    runWithState((state, applyMessage) => {
+      applyMessage({
+        msg: "init_input",
+        type: "messages",
+        tag: "stash_search",
+        prompt: "Search for what [? for help]?",
+        prefill: " potion ",
+        maxlen: 40,
+        select_prefill: true
+      });
+
+      expect(state.textInputPrompt).toEqual({
+        source: "init_input",
+        type: "messages",
+        tag: "stash_search",
+        prompt: "Search for what [? for help]?",
+        value: "potion",
+        maxLength: 40,
+        selectOnOpen: true
+      });
+
+      applyMessage({ msg: "update_input", input_text: "scroll", select: true });
+      expect(state.textInputPrompt?.value).toBe("scroll");
+      expect(state.textInputPrompt?.selectOnOpen).toBe(true);
+
+      applyMessage({ msg: "close_input" });
+      expect(state.textInputPrompt).toBeNull();
+    });
+  });
+
+  it("opens and closes title-prompt menu input as a modal prompt", () => {
+    runWithState((state, applyMessage) => {
+      applyMessage({
+        msg: "title_prompt",
+        prompt: "Select what? (regex)"
+      });
+
+      expect(state.textInputPrompt).toMatchObject({
+        source: "title_prompt",
+        type: "menu",
+        prompt: "Select what? (regex)",
+        value: ""
+      });
+
+      applyMessage({ msg: "title_prompt", close: true });
+      expect(state.textInputPrompt).toBeNull();
+    });
+  });
+
+  it("keeps rich item detail text from describe-item ui panels", () => {
+    runWithState((state, applyMessage) => {
+      applyMessage({
+        msg: "ui-push",
+        type: "describe-item",
+        title: "a +0 trident.",
+        body: "A weapon with reach.\n\nBase accuracy: +1\nBase damage: 9\nSPELLSET_PLACEHOLDER",
+        actions: "(w)ield, (d)rop, e(v)oke",
+        spellset: [
+          {
+            label: "Spells:",
+            spells: [
+              {
+                letter: "a",
+                title: "Foxfire",
+                level: 1,
+                schools: "Fire",
+                effect: "flame",
+                range_string: "Range: 2"
+              }
+            ]
+          }
+        ]
+      });
+
+      expect(state.uiStack.at(-1)).toMatchObject({
+        type: "describe-item",
+        title: "a +0 trident.",
+        body: "A weapon with reach.\n\nBase accuracy: +1\nBase damage: 9\nSpells:\na - Foxfire (level 1, Fire, flame, Range: 2)",
+        actions: "(w)ield, (d)rop, e(v)oke",
+        actionButtons: [
+          { label: "(w)ield", hotkey: 119 },
+          { label: "(d)rop", hotkey: 100 },
+          { label: "e(v)oke", hotkey: 118 }
+        ]
+      });
     });
   });
 

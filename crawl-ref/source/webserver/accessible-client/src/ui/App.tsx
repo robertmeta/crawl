@@ -12,13 +12,17 @@ import { connectCrawlSocket, type CrawlSocket } from "../protocol/socket";
 import {
   createAccessibleGameState,
   type AccessibleGameState,
+  type GameUiAction,
   type GameMenu,
   type GameMenuItem,
   type GameUiButton,
   type GameUiPanel as GameUiPanelData,
-  type InventoryItem
+  type InventoryItem,
+  type TextInputPrompt
 } from "../state/game-state";
 import { createTileRenderer, type TileRenderer } from "../tiles/tile-renderer";
+import { scrollChildIntoView } from "./dom-scroll";
+import { menuActivationMessages } from "./menu-actions";
 
 type AppProps = {
   config?: {
@@ -129,11 +133,43 @@ export function App(props: AppProps) {
     queueMicrotask(() => gameRootRef?.focus());
   };
 
+  const setTextInputValue = (value: string) => {
+    setState("textInputPrompt", (prompt) => prompt ? { ...prompt, value } : prompt);
+  };
+
+  const cancelTextInput = () => {
+    send({ msg: "key", keycode: 27 });
+    setState("textInputPrompt", null);
+    setState("lastAnnouncement", "Text input cancelled.");
+    queueMicrotask(() => gameRootRef?.focus());
+  };
+
+  const submitTextInput = () => {
+    const prompt = state.textInputPrompt;
+    if (!prompt) {
+      return;
+    }
+    if (prompt.source === "init_input" && prompt.tag !== "repeat") {
+      send({ msg: "key", keycode: 21 });
+      send({ msg: "key", keycode: 11 });
+    }
+    send({ msg: "text_input", text: `${prompt.value}\r` });
+    setState("textInputPrompt", null);
+    queueMicrotask(() => gameRootRef?.focus());
+  };
+
   const handleKeyDown = (event: KeyboardEvent) => {
     if (historyOpen()) {
       if (event.key === "Escape" && !isTextInput(event.target)) {
         event.preventDefault();
         closeHistory();
+      }
+      return;
+    }
+    if (state.textInputPrompt) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelTextInput();
       }
       return;
     }
@@ -192,6 +228,9 @@ export function App(props: AppProps) {
 
   const handleKeyPress = (event: KeyboardEvent) => {
     if (historyOpen()) {
+      return;
+    }
+    if (state.textInputPrompt) {
       return;
     }
     if (state.staleProcess || state.forceTerminatePrompt) {
@@ -254,6 +293,17 @@ export function App(props: AppProps) {
           setQuery={setHistoryQuery}
           onClose={closeHistory}
         />
+      </Show>
+      <Show when={state.textInputPrompt}>
+        {(prompt) => (
+          <TextInputDialog
+            prompt={prompt()}
+            setValue={setTextInputValue}
+            onSubmit={submitTextInput}
+            onCancel={cancelTextInput}
+            send={send}
+          />
+        )}
       </Show>
       <Show when={!inGameView()}>
         <aside class="sidebar" aria-label="WebTiles session">
@@ -401,6 +451,79 @@ function SessionPrompts(props: {
   );
 }
 
+function TextInputDialog(props: {
+  prompt: TextInputPrompt;
+  setValue: (value: string) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+  send: (message: OutgoingMessage) => void;
+}) {
+  let inputRef: HTMLInputElement | undefined;
+
+  createEffect(() => {
+    props.prompt;
+    queueMicrotask(() => {
+      inputRef?.focus();
+      if (props.prompt.selectOnOpen) {
+        inputRef?.select();
+      }
+    });
+  });
+
+  const submit = (event: SubmitEvent) => {
+    event.preventDefault();
+    props.onSubmit();
+  };
+
+  const keyDown = (event: KeyboardEvent) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      props.onCancel();
+      return;
+    }
+    if (
+      props.prompt.tag === "stash_search"
+      && event.key === "?"
+      && props.prompt.value.length === 0
+    ) {
+      event.preventDefault();
+      props.send({ msg: "key", keycode: "?".charCodeAt(0) });
+    }
+  };
+
+  return (
+    <section
+      class="text-input-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="text-input-title"
+      aria-describedby="text-input-help"
+      onKeyDown={keyDown}
+    >
+      <form class="text-input-card panel" onSubmit={submit}>
+        <h2 id="text-input-title">Text Input</h2>
+        <label for="game-text-input">{props.prompt.prompt}</label>
+        <input
+          ref={(element) => { inputRef = element; }}
+          id="game-text-input"
+          type="text"
+          autocomplete="off"
+          value={props.prompt.value}
+          maxLength={props.prompt.maxLength ?? undefined}
+          onInput={(event) => props.setValue(event.currentTarget.value)}
+        />
+        <p id="text-input-help" class="status-line">
+          Enter submits to Crawl. Escape cancels.
+        </p>
+        <div class="inline-actions">
+          <button type="submit">Submit</button>
+          <button type="button" onClick={props.onCancel}>Cancel</button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
 function GamePanel(props: {
   state: AccessibleGameState;
   send: (message: OutgoingMessage) => void;
@@ -428,7 +551,12 @@ function GamePanel(props: {
           fallback={
             <Show
               when={props.state.uiStack.at(-1)}
-              fallback={<GameTextAreas textAreas={props.state.textAreas} />}
+              fallback={
+                <GameTextAreas
+                  textAreas={props.state.textAreas}
+                  activeCrtMenuTag={props.state.activeCrtMenuTag}
+                />
+              }
             >
               {(panel) => <GameUiPanel panel={panel()} send={props.send} />}
             </Show>
@@ -530,6 +658,29 @@ function GameUiPanel(props: {
       <Show when={props.panel.prompt}>
         <p class="status-line">{props.panel.prompt}</p>
       </Show>
+      <Show when={props.panel.body}>
+        <div
+          class="ui-description"
+          role="region"
+          tabindex="0"
+          aria-label={`${props.panel.title || "Game"} details`}
+        >
+          <pre>{props.panel.body}</pre>
+        </div>
+      </Show>
+      <Show when={props.panel.actions}>
+        <section class="ui-actions" aria-labelledby="ui-actions-title">
+          <h4 id="ui-actions-title">Actions</h4>
+          <p class="status-line">{props.panel.actions}</p>
+          <Show when={props.panel.actionButtons.length > 0}>
+            <div class="inline-actions">
+              <For each={props.panel.actionButtons}>
+                {(action) => <GameUiActionButton action={action} send={props.send} />}
+              </For>
+            </div>
+          </Show>
+        </section>
+      </Show>
       <For each={props.panel.groups}>
         {(group) => (
           <section class="choice-group" aria-labelledby={textAreaHeadingId(group.id)}>
@@ -549,6 +700,28 @@ function GameUiPanel(props: {
         )}
       </For>
     </section>
+  );
+}
+
+function GameUiActionButton(props: {
+  action: GameUiAction;
+  send: (message: OutgoingMessage) => void;
+}) {
+  const choose = () => {
+    if (props.action.hotkey !== null) {
+      props.send({ msg: "key", keycode: props.action.hotkey });
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      class="ui-action-button"
+      disabled={props.action.hotkey === null}
+      onClick={choose}
+    >
+      {props.action.label}
+    </button>
   );
 }
 
@@ -591,14 +764,12 @@ function GameMenuPanel(props: {
   menu: GameMenu;
   send: (message: OutgoingMessage) => void;
 }) {
+  let listRef: HTMLOListElement | undefined;
   const visibleItems = () => props.menu.items.filter((item) => item.text);
   const choose = (item: GameMenuItem) => {
-    props.send({ msg: "menu_hover", hover: item.index, mouse: false });
-    if (item.hotkeys.length > 0) {
-      props.send({ msg: "key", keycode: item.hotkeys[0] });
-      return;
+    for (const message of menuActivationMessages(props.menu, item)) {
+      props.send(message);
     }
-    props.send({ msg: "key", keycode: 13 });
   };
   const focus = (item: GameMenuItem) => {
     if (item.selectable) {
@@ -606,13 +777,24 @@ function GameMenuPanel(props: {
     }
   };
 
+  createEffect(() => {
+    props.menu.lastHovered;
+    props.menu.items.length;
+    queueMicrotask(() => {
+      const selected = listRef?.querySelector<HTMLElement>(".menu-item-button.selected");
+      if (listRef && selected) {
+        scrollChildIntoView(listRef, selected);
+      }
+    });
+  });
+
   return (
     <section class="game-menu" aria-labelledby="active-menu-title">
       <h3 id="active-menu-title">{props.menu.title || "Game Menu"}</h3>
       <p class="status-line">
         Showing {visibleItems().length} of {props.menu.totalItems} rows. Standard Crawl menu keys still work.
       </p>
-      <ol class="menu-list">
+      <ol ref={(element) => { listRef = element; }} class="menu-list">
         <For each={visibleItems()}>
           {(item) => (
             <li classList={{ "menu-heading": item.level < 2 }}>
@@ -629,7 +811,7 @@ function GameMenuPanel(props: {
                   onClick={() => choose(item)}
                 >
                   <Show when={item.hotkeys.length > 0}>
-                    <span class="menu-hotkeys">{formatHotkeys(item.hotkeys)}</span>
+                    <span class="sr-only">Hotkey {formatHotkeys(item.hotkeys)}. </span>
                   </Show>
                   <span>{item.text}</span>
                 </button>
@@ -796,9 +978,13 @@ function slotLetter(slot: number | null): string {
     : String.fromCharCode("A".charCodeAt(0) + slot - 26);
 }
 
-function GameTextAreas(props: { textAreas: AccessibleGameState["textAreas"] }) {
+function GameTextAreas(props: {
+  textAreas: AccessibleGameState["textAreas"];
+  activeCrtMenuTag: string | null;
+}) {
   const entries = () => Object.entries(props.textAreas)
     .filter(([, lines]) => Object.keys(lines).length > 0)
+    .filter(([id]) => id !== "menu_txt" || props.activeCrtMenuTag !== null)
     .sort(([left], [right]) => left.localeCompare(right));
 
   return (
@@ -821,7 +1007,18 @@ function MessagesPanel(props: {
   state: AccessibleGameState;
   onOpenHistory: () => void;
 }) {
+  let messagesRef: HTMLDivElement | undefined;
   const recentMessages = () => props.state.messages.slice(-8);
+
+  createEffect(() => {
+    props.state.messages.length;
+    props.state.morePrompt;
+    queueMicrotask(() => {
+      if (messagesRef) {
+        messagesRef.scrollTop = messagesRef.scrollHeight;
+      }
+    });
+  });
 
   return (
     <section class="panel" aria-labelledby="messages-title">
@@ -835,7 +1032,14 @@ function MessagesPanel(props: {
       <Show when={props.state.morePrompt}>
         <p role="status">{props.state.morePrompt}</p>
       </Show>
-      <div class="messages" role="log" aria-live="off" aria-relevant="additions" aria-label="Recent messages">
+      <div
+        ref={(element) => { messagesRef = element; }}
+        class="messages"
+        role="log"
+        aria-live="off"
+        aria-relevant="additions"
+        aria-label="Recent messages"
+      >
         <For each={recentMessages()}>
           {(message) => <p class="message">{message.text}</p>}
         </For>
@@ -975,6 +1179,7 @@ function textAreaLabel(id: string): string {
   const labels: Record<string, string> = {
     crt: "Main Game View",
     map: "Map",
+    menu_txt: "Text Menu",
     message: "Message Area",
     messages: "Messages"
   };
