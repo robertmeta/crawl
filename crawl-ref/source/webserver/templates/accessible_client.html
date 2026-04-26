@@ -11,8 +11,13 @@
         gameVersion: "{{ game_version }}"
       };
     </script>
+{% if accessible_client_dev_server %}
+    <script type="module" src="{{ accessible_client_dev_server }}/@vite/client"></script>
+    <script type="module" src="{{ accessible_client_dev_server }}/src/main.tsx"></script>
+{% else %}
     <link rel="stylesheet" href="/static/accessible/app.css?v={{ asset_version }}">
     <script type="module" src="/static/accessible/app.js?v={{ asset_version }}"></script>
+{% end %}
   </head>
   <body>
     <noscript>Please enable JavaScript to use WebTiles.</noscript>

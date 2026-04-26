@@ -87,6 +87,7 @@ defaults = {
     'daemon': False,
     'development_mode': False,
     'no_cache': False,
+    'accessible_client_dev_server': None,
     'live_debug': False,
     'lobby_update_rate': 2,
     'load_logging_rate': 0,

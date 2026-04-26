@@ -103,6 +103,7 @@ const baseKeys: Record<string, number> = {
   Escape: 27,
   Backspace: 8,
   Tab: 9,
+  Delete: CK_DELETE,
   Insert: CK_INSERT,
   End: CK_END,
   ArrowDown: CK_DOWN,
@@ -170,19 +171,99 @@ const ctrlShiftKeys: Record<string, number> = {
   " ": CK_CTRL_SHIFT_SPACE
 };
 
-export function crawlKeyCode(event: KeyboardEvent): number | undefined {
-  if (event.code && codeConversion[event.code] !== undefined) {
-    return codeConversion[event.code];
-  }
+const capturedControlKeys = new Set([
+  "O", "Q", "F", "P", "W", "A", "T", "X", "S", "G", "I", "D", "E",
+  "H", "J", "K", "L", "Y", "U", "B", "N", "C", "M",
+  "1", "2", "3", "4", "5", "6", "7", "8", "9", "0"
+]);
 
-  if (event.ctrlKey && event.shiftKey && ctrlShiftKeys[event.key] !== undefined) {
-    return ctrlShiftKeys[event.key];
+const numpadNavigationKeys: Record<string, string> = {
+  Numpad1: "End",
+  Numpad2: "ArrowDown",
+  Numpad3: "PageDown",
+  Numpad4: "ArrowLeft",
+  Numpad6: "ArrowRight",
+  Numpad7: "Home",
+  Numpad8: "ArrowUp",
+  Numpad9: "PageUp"
+};
+
+export type CrawlPrintableInput = { text: string } | { data: number[] };
+
+export function crawlKeyCode(event: KeyboardEvent): number | undefined {
+  const key = modifiedNavigationKey(event) ?? event.key;
+
+  if (event.ctrlKey && event.shiftKey && !event.altKey && ctrlShiftKeys[key] !== undefined) {
+    return ctrlShiftKeys[key];
   }
-  if (event.ctrlKey && ctrlKeys[event.key] !== undefined) {
-    return ctrlKeys[event.key];
+  if (event.ctrlKey && !event.shiftKey && !event.altKey) {
+    if (ctrlKeys[key] !== undefined) {
+      return ctrlKeys[key];
+    }
+    return crawlControlKeyCode(event.key);
   }
-  if (event.shiftKey && shiftKeys[event.key] !== undefined) {
-    return shiftKeys[event.key];
+  if (!event.ctrlKey && event.shiftKey && !event.altKey && shiftKeys[key] !== undefined) {
+    return shiftKeys[key];
   }
-  return baseKeys[event.key];
+  if (!event.ctrlKey && !event.shiftKey && !event.altKey) {
+    if (event.code && codeConversion[event.code] !== undefined) {
+      return codeConversion[event.code];
+    }
+    return baseKeys[event.key];
+  }
+  return undefined;
+}
+
+export function crawlControlKeyCode(key: string): number | undefined {
+  const normalized = key.toUpperCase();
+  if (!capturedControlKeys.has(normalized)) {
+    return undefined;
+  }
+  return normalized.charCodeAt(0) - "A".charCodeAt(0) + 1;
+}
+
+export function crawlAltInputData(event: KeyboardEvent): number[] | undefined {
+  if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.key.length !== 1) {
+    return undefined;
+  }
+  return [27, event.key.charCodeAt(0)];
+}
+
+export function crawlPrintableInput(event: KeyboardEvent): CrawlPrintableInput | undefined {
+  if (event.key.length !== 1 || shouldIgnorePrintableInput(event)) {
+    return undefined;
+  }
+  if (event.key === "{") {
+    return { data: [event.key.charCodeAt(0)] };
+  }
+  return { text: event.key };
+}
+
+export function unsupportedClientShortcut(event: KeyboardEvent): string | null {
+  if (!event.ctrlKey && !event.shiftKey && !event.altKey && event.key === "F12") {
+    return "chat shortcut";
+  }
+  return null;
+}
+
+function modifiedNavigationKey(event: KeyboardEvent): string | null {
+  if (!event.shiftKey && !event.ctrlKey) {
+    return null;
+  }
+  return event.code ? numpadNavigationKeys[event.code] ?? null : null;
+}
+
+function shouldIgnorePrintableInput(event: KeyboardEvent): boolean {
+  if (event.metaKey) {
+    return true;
+  }
+  if (isAltGraphInput(event)) {
+    return false;
+  }
+  return event.ctrlKey || event.altKey;
+}
+
+function isAltGraphInput(event: KeyboardEvent): boolean {
+  return event.key.length === 1
+    && (event.getModifierState?.("AltGraph") || (event.ctrlKey && event.altKey));
 }

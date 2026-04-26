@@ -45,11 +45,11 @@ server_path = os.path.dirname(os.path.abspath(__file__))
 # the nonsecure ports as indicated, but redirect them to an SSL port.
 bind_nonsecure = True
 bind_address = ""
-bind_port = 8080
+bind_port = 6080
 
 # Or listen on multiple address/port pairs (overriding the above) with:
 # bind_pairs = (
-#     ("127.0.0.1", 8080),
+#     ("127.0.0.1", 6080),
 #     ("localhost", 8082),
 #     ("", 8180), # All addresses
 # )
@@ -368,7 +368,7 @@ init_player_program = "./util/webtiles-init-player.sh"
 # Set to the primary URL where a player would reach the main lobby
 # For example: "http://crawl.akrasiac.org/"
 # This is required for for password reset, as it will be the base URL for
-# recovery URLs. Use "http://localhost:8080/" for testing.
+# recovery URLs. Use "http://localhost:6080/" for testing.
 lobby_url = None
 
 # Proper SMTP settings are required for password reset to function properly.
@@ -443,5 +443,9 @@ hup_reloads_config = True
 
 # Disable caching of static files which are not part of game data.
 # no_cache = development_mode
+# Load the accessible SolidJS client from a Vite dev server with HMR instead
+# of from /static/accessible/. Start it with `npm run dev` in
+# webserver/accessible-client/ and uncomment this while working on the UI.
+# accessible_client_dev_server = "http://127.0.0.1:6173"
 # Automatically log in all users with the username given here.
 autologin = None

@@ -1,13 +1,22 @@
-import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 
-import { crawlKeyCode } from "../protocol/keymap";
+import {
+  crawlAltInputData,
+  crawlKeyCode,
+  crawlPrintableInput,
+  unsupportedClientShortcut,
+  type CrawlPrintableInput
+} from "../protocol/keymap";
 import type { OutgoingMessage } from "../protocol/messages";
 import { connectCrawlSocket, type CrawlSocket } from "../protocol/socket";
 import {
   createAccessibleGameState,
   type AccessibleGameState,
+  type GameMenu,
+  type GameMenuItem,
   type GameUiButton,
-  type GameUiPanel as GameUiPanelData
+  type GameUiPanel as GameUiPanelData,
+  type InventoryItem
 } from "../state/game-state";
 import { createTileRenderer, type TileRenderer } from "../tiles/tile-renderer";
 
@@ -27,10 +36,16 @@ export function App(props: AppProps) {
   const [repeatPassword, setRepeatPassword] = createSignal("");
   const [email, setEmail] = createSignal("");
   const [rcContents, setRcContents] = createSignal("");
-  let gameInputRef: HTMLDivElement | undefined;
+  const [historyOpen, setHistoryOpen] = createSignal(false);
+  const [historyQuery, setHistoryQuery] = createSignal("");
+  let gameRootRef: HTMLElement | undefined;
+  let suppressedKeyPress: string | null = null;
 
   const send = (message: OutgoingMessage) => socket()?.send(message);
   const inGameView = () => state.activeLayer === "game" || state.isInGame;
+  const sendPrintableInput = (input: CrawlPrintableInput) => {
+    send("data" in input ? { msg: "input", data: input.data } : { msg: "input", text: input.text });
+  };
 
   createEffect(() => {
     if (!props.config?.socketServer) {
@@ -60,7 +75,7 @@ export function App(props: AppProps) {
 
   createEffect(() => {
     if (inGameView()) {
-      queueMicrotask(() => gameInputRef?.focus());
+      queueMicrotask(() => gameRootRef?.focus());
     }
   });
 
@@ -91,8 +106,72 @@ export function App(props: AppProps) {
     setState("rcFile", null);
   };
 
+  const stopStalePurge = () => {
+    send({ msg: "stop_stale_process_purge" });
+    setState("staleProcess", null);
+    setState("lastAnnouncement", "Keeping the stale process running.");
+  };
+
+  const answerForceTerminate = (answer: boolean) => {
+    send({ msg: "force_terminate", answer });
+    setState("forceTerminatePrompt", null);
+    setState("lastAnnouncement", answer ? "Force termination requested." : "Force termination declined.");
+  };
+
+  const openHistory = () => {
+    setHistoryOpen(true);
+    setState("lastAnnouncement", `Message history opened. ${state.messages.length} messages available.`);
+  };
+
+  const closeHistory = () => {
+    setHistoryOpen(false);
+    setState("lastAnnouncement", "Message history closed.");
+    queueMicrotask(() => gameRootRef?.focus());
+  };
+
   const handleKeyDown = (event: KeyboardEvent) => {
-    if (!state.isInGame || isTextInput(event.target)) {
+    if (historyOpen()) {
+      if (event.key === "Escape" && !isTextInput(event.target)) {
+        event.preventDefault();
+        closeHistory();
+      }
+      return;
+    }
+    if ((state.staleProcess || state.forceTerminatePrompt) && isButtonActivation(event)) {
+      return;
+    }
+    if (state.forceTerminatePrompt) {
+      event.preventDefault();
+      answerForceTerminate(event.key.toLowerCase() === "y");
+      return;
+    }
+    if (state.staleProcess) {
+      event.preventDefault();
+      stopStalePurge();
+      return;
+    }
+    if (!state.isInGame || isTextInput(event.target) || isNativeControlActivation(event)) {
+      return;
+    }
+
+    const unsupportedShortcut = unsupportedClientShortcut(event);
+    if (unsupportedShortcut) {
+      event.preventDefault();
+      setState("lastAnnouncement", `Not implemented: ${unsupportedShortcut}.`);
+      return;
+    }
+
+    const uiHotkeyCode = gameUiHotkeyCode(event, state.uiStack);
+    if (uiHotkeyCode !== null) {
+      event.preventDefault();
+      send({ msg: "key", keycode: uiHotkeyCode });
+      return;
+    }
+
+    const altData = crawlAltInputData(event);
+    if (altData) {
+      event.preventDefault();
+      send({ msg: "input", data: altData });
       return;
     }
 
@@ -100,73 +179,130 @@ export function App(props: AppProps) {
     if (keycode !== undefined) {
       event.preventDefault();
       send({ msg: "key", keycode });
+      return;
+    }
+
+    const printableInput = crawlPrintableInput(event);
+    if (printableInput) {
+      event.preventDefault();
+      suppressedKeyPress = event.key;
+      sendPrintableInput(printableInput);
     }
   };
 
   const handleKeyPress = (event: KeyboardEvent) => {
-    if (!state.isInGame || isTextInput(event.target) || event.ctrlKey || event.metaKey || event.altKey) {
+    if (historyOpen()) {
       return;
+    }
+    if (state.staleProcess || state.forceTerminatePrompt) {
+      event.preventDefault();
+      return;
+    }
+    if (
+      !state.isInGame
+      || isTextInput(event.target)
+      || isNativeControlActivation(event)
+    ) {
+      return;
+    }
+
+    const printableInput = crawlPrintableInput(event);
+    if (!printableInput) {
+      return;
+    }
+
+    if (suppressedKeyPress) {
+      if (suppressedKeyPress === event.key) {
+        event.preventDefault();
+        suppressedKeyPress = null;
+        return;
+      }
+      suppressedKeyPress = null;
     }
 
     if (event.key.length === 1) {
       event.preventDefault();
-      if (event.key === "{") {
-        send({ msg: "input", data: [event.key.charCodeAt(0)] });
-      } else {
-        send({ msg: "input", text: event.key });
-      }
+      sendPrintableInput(printableInput);
     }
   };
 
+  createEffect(() => {
+    if (!state.isInGame && !state.staleProcess && !state.forceTerminatePrompt) {
+      return;
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("keypress", handleKeyPress);
+    onCleanup(() => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("keypress", handleKeyPress);
+    });
+  });
+
   return (
-    <div class="app-shell">
+    <div class="app-shell" classList={{ "game-shell": inGameView() }}>
       <LiveRegion message={state.lastAnnouncement} />
-      <aside class="sidebar" aria-label="WebTiles session">
-        <div class="stack">
-          <header>
-            <h1>Accessible WebTiles</h1>
-            <p class="status-line">Status: {state.connectionStatus}</p>
-            <Show when={props.config?.gameVersion}>
-              <p class="status-line">Server version: {props.config?.gameVersion}</p>
+      <SessionPrompts
+        state={state}
+        onStopStalePurge={stopStalePurge}
+        onForceTerminate={answerForceTerminate}
+      />
+      <Show when={historyOpen()}>
+        <MessageHistoryDialog
+          messages={state.messages}
+          query={historyQuery()}
+          setQuery={setHistoryQuery}
+          onClose={closeHistory}
+        />
+      </Show>
+      <Show when={!inGameView()}>
+        <aside class="sidebar" aria-label="WebTiles session">
+          <div class="stack">
+            <header>
+              <h1>Accessible WebTiles</h1>
+              <p class="status-line">Status: {state.connectionStatus}</p>
+              <Show when={props.config?.gameVersion}>
+                <p class="status-line">Server version: {props.config?.gameVersion}</p>
+              </Show>
+            </header>
+
+            <Show when={state.errors.length > 0}>
+              <section class="panel" aria-labelledby="errors-title">
+                <h2 id="errors-title">Errors</h2>
+                <For each={state.errors}>{(error) => <p class="error">{error}</p>}</For>
+              </section>
             </Show>
-          </header>
 
-          <Show when={state.errors.length > 0}>
-            <section class="panel" aria-labelledby="errors-title">
-              <h2 id="errors-title">Errors</h2>
-              <For each={state.errors}>{(error) => <p class="error">{error}</p>}</For>
-            </section>
-          </Show>
+            <Show
+              when={state.currentUser}
+              fallback={
+                <AuthPanel
+                  mode={authMode()}
+                  setMode={setAuthMode}
+                  username={username()}
+                  password={password()}
+                  repeatPassword={repeatPassword()}
+                  email={email()}
+                  setUsername={setUsername}
+                  setPassword={setPassword}
+                  setRepeatPassword={setRepeatPassword}
+                  setEmail={setEmail}
+                  onLogin={login}
+                  onRegister={register}
+                />
+              }
+            >
+              <section class="panel" aria-labelledby="account-title">
+                <h2 id="account-title">Account</h2>
+                <p>Logged in as {state.currentUser}</p>
+                <button type="button" onClick={() => send({ msg: "logout" })}>Log out</button>
+              </section>
+            </Show>
+          </div>
+        </aside>
+      </Show>
 
-          <Show
-            when={state.currentUser}
-            fallback={
-              <AuthPanel
-                mode={authMode()}
-                setMode={setAuthMode}
-                username={username()}
-                password={password()}
-                repeatPassword={repeatPassword()}
-                email={email()}
-                setUsername={setUsername}
-                setPassword={setPassword}
-                setRepeatPassword={setRepeatPassword}
-                setEmail={setEmail}
-                onLogin={login}
-                onRegister={register}
-              />
-            }
-          >
-            <section class="panel" aria-labelledby="account-title">
-              <h2 id="account-title">Account</h2>
-              <p>Logged in as {state.currentUser}</p>
-              <button type="button" onClick={() => send({ msg: "logout" })}>Log out</button>
-            </section>
-          </Show>
-        </div>
-      </aside>
-
-      <main class="main" aria-label="WebTiles client">
+      <main class="main" classList={{ "game-main": inGameView() }} aria-label="WebTiles client">
         <Show when={state.rcFile}>
           <section class="panel" aria-labelledby="rc-title">
             <h2 id="rc-title">Edit rc file for {state.rcFile?.gameId}</h2>
@@ -188,9 +324,8 @@ export function App(props: AppProps) {
           <GamePanel
             state={state}
             send={send}
-            setGameInputRef={(element) => { gameInputRef = element; }}
-            onKeyDown={handleKeyDown}
-            onKeyPress={handleKeyPress}
+            setGameRootRef={(element) => { gameRootRef = element; }}
+            onOpenHistory={openHistory}
           />
         </Show>
       </main>
@@ -231,62 +366,100 @@ function LobbyPanels(props: {
   );
 }
 
-function GamePanel(props: {
+function SessionPrompts(props: {
   state: AccessibleGameState;
-  send: (message: OutgoingMessage) => void;
-  setGameInputRef: (element: HTMLDivElement) => void;
-  onKeyDown: (event: KeyboardEvent) => void;
-  onKeyPress: (event: KeyboardEvent) => void;
+  onStopStalePurge: () => void;
+  onForceTerminate: (answer: boolean) => void;
 }) {
   return (
     <>
-      <section class="panel game-panel" aria-labelledby="game-title">
-        <div class="game-heading">
-          <div>
-            <h2 id="game-title">Game</h2>
-            <p id="game-keyboard-help" class="status-line">
-              Focus the game input region to send Crawl keyboard commands.
+      <Show when={props.state.staleProcess}>
+        {(prompt) => (
+          <section class="session-prompt panel" role="alertdialog" aria-labelledby="stale-process-title">
+            <h2 id="stale-process-title">Stale Game Process</h2>
+            <p>
+              There are stale {prompt().game} processes. They will be stopped in {prompt().timeout} seconds.
             </p>
-          </div>
-          <button type="button" onClick={() => props.send({ msg: "go_lobby" })}>
-            End game and return to lobby
-          </button>
-        </div>
+            <p class="status-line">Press any key to keep waiting, or use the button below.</p>
+            <button type="button" onClick={props.onStopStalePurge}>Keep waiting</button>
+          </section>
+        )}
+      </Show>
+      <Show when={props.state.forceTerminatePrompt}>
+        {(prompt) => (
+          <section class="session-prompt panel" role="alertdialog" aria-labelledby="force-terminate-title">
+            <h2 id="force-terminate-title">Force Termination</h2>
+            <p>Could not stop a stale {prompt().game} process gracefully. Force its termination?</p>
+            <div class="inline-actions">
+              <button type="button" onClick={() => props.onForceTerminate(true)}>Yes</button>
+              <button type="button" onClick={() => props.onForceTerminate(false)}>No</button>
+            </div>
+          </section>
+        )}
+      </Show>
+    </>
+  );
+}
 
-        <div
-          ref={props.setGameInputRef}
-          class="game-input"
-          tabindex="0"
-          role="group"
-          aria-label="Game keyboard input"
-          aria-describedby="game-keyboard-help"
-          onKeyDown={props.onKeyDown}
-          onKeyPress={props.onKeyPress}
-        >
-          <p class="status-line">
-            Keyboard input is active when this region has focus.
-          </p>
-        </div>
-      </section>
-
+function GamePanel(props: {
+  state: AccessibleGameState;
+  send: (message: OutgoingMessage) => void;
+  setGameRootRef: (element: HTMLElement) => void;
+  onOpenHistory: () => void;
+}) {
+  return (
+    <section
+      ref={props.setGameRootRef}
+      class="game-screen"
+      tabindex="0"
+      aria-labelledby="game-title"
+      aria-describedby="game-keyboard-help"
+    >
+      <h2 id="game-title" class="sr-only">Game</h2>
+      <p id="game-keyboard-help" class="sr-only">
+        Game keyboard input is active. Standard Crawl keys are sent directly to the game.
+      </p>
       <TileMapPanel state={props.state} />
 
-      <section class="panel" aria-labelledby="game-screen-title">
-        <h2 id="game-screen-title">Game Interface</h2>
+      <div class="game-overlay game-interface" aria-labelledby="game-screen-title">
+        <h2 id="game-screen-title" class="sr-only">Game Interface</h2>
         <Show
-          when={props.state.uiStack.at(-1)}
-          fallback={<GameTextAreas textAreas={props.state.textAreas} />}
+          when={props.state.activeMenu}
+          fallback={
+            <Show
+              when={props.state.uiStack.at(-1)}
+              fallback={<GameTextAreas textAreas={props.state.textAreas} />}
+            >
+              {(panel) => <GameUiPanel panel={panel()} send={props.send} />}
+            </Show>
+          }
         >
-          {(panel) => <GameUiPanel panel={panel()} send={props.send} />}
+          {(menu) => <GameMenuPanel menu={menu()} send={props.send} />}
         </Show>
-      </section>
+      </div>
 
       <Show when={props.state.player}>
-        {(player) => <PlayerPanel player={player()} />}
+        {(player) => (
+          <div class="game-overlay player-overlay">
+            <PlayerPanel player={player()} inventory={props.state.inventory} />
+          </div>
+        )}
       </Show>
 
-      <MessagesPanel state={props.state} />
-    </>
+      <Show when={props.state.inventory.length > 0}>
+        <div class="game-overlay inventory-overlay">
+          <InventoryPanel
+            inventory={props.state.inventory}
+            player={props.state.player}
+            send={props.send}
+          />
+        </div>
+      </Show>
+
+      <div class="game-overlay messages-overlay">
+        <MessagesPanel state={props.state} onOpenHistory={props.onOpenHistory} />
+      </div>
+    </section>
   );
 }
 
@@ -323,15 +496,16 @@ function TileMapPanel(props: { state: AccessibleGameState }) {
     const nextRenderer = renderer();
     const canvas = canvasRef;
     const revision = props.state.mapRevision;
+    const cursorRevision = props.state.cursorRevision;
     if (!nextRenderer || !canvas || !hasMap()) {
       return;
     }
-    nextRenderer.draw(canvas, props.state.mapCells, props.state.mapCenter, revision);
+    nextRenderer.draw(canvas, props.state.mapCells, props.state.mapCenter, props.state.activeCursor, revision + cursorRevision);
   });
 
   return (
-    <section class="panel tile-map-panel" aria-labelledby="tile-map-title">
-      <h2 id="tile-map-title">Tile Map</h2>
+    <section class="tile-map-panel" aria-labelledby="tile-map-title">
+      <h2 id="tile-map-title" class="sr-only">Tile Map</h2>
       <Show when={hasMap()} fallback={<p class="status-line">The tile map appears after character creation.</p>}>
         <div class="tile-map-frame">
           <canvas
@@ -413,46 +587,213 @@ function GameChoiceButton(props: {
   );
 }
 
-function PlayerPanel(props: { player: NonNullable<AccessibleGameState["player"]> }) {
+function GameMenuPanel(props: {
+  menu: GameMenu;
+  send: (message: OutgoingMessage) => void;
+}) {
+  const visibleItems = () => props.menu.items.filter((item) => item.text);
+  const choose = (item: GameMenuItem) => {
+    props.send({ msg: "menu_hover", hover: item.index, mouse: false });
+    if (item.hotkeys.length > 0) {
+      props.send({ msg: "key", keycode: item.hotkeys[0] });
+      return;
+    }
+    props.send({ msg: "key", keycode: 13 });
+  };
+  const focus = (item: GameMenuItem) => {
+    if (item.selectable) {
+      props.send({ msg: "menu_hover", hover: item.index, mouse: false });
+    }
+  };
+
   return (
-    <section class="panel" aria-labelledby="player-title">
-      <h2 id="player-title">Player</h2>
-      <dl class="player-summary">
-        <Show when={props.player.name}>
-          <dt>Name</dt>
-          <dd>{props.player.name}</dd>
-        </Show>
-        <Show when={props.player.species}>
-          <dt>Species</dt>
-          <dd>{props.player.species}</dd>
-        </Show>
-        <Show when={props.player.job}>
-          <dt>Title</dt>
-          <dd>{props.player.job}</dd>
-        </Show>
-        <Show when={props.player.place}>
-          <dt>Place</dt>
-          <dd>{props.player.place}</dd>
-        </Show>
-        <Show when={props.player.hp}>
-          <dt>HP</dt>
-          <dd>{props.player.hp}</dd>
-        </Show>
-        <Show when={props.player.mp}>
-          <dt>MP</dt>
-          <dd>{props.player.mp}</dd>
-        </Show>
-        <Show when={props.player.xl}>
-          <dt>XL</dt>
-          <dd>{props.player.xl}</dd>
-        </Show>
-        <Show when={props.player.turn}>
-          <dt>Turn</dt>
-          <dd>{props.player.turn}</dd>
-        </Show>
-      </dl>
+    <section class="game-menu" aria-labelledby="active-menu-title">
+      <h3 id="active-menu-title">{props.menu.title || "Game Menu"}</h3>
+      <p class="status-line">
+        Showing {visibleItems().length} of {props.menu.totalItems} rows. Standard Crawl menu keys still work.
+      </p>
+      <ol class="menu-list">
+        <For each={visibleItems()}>
+          {(item) => (
+            <li classList={{ "menu-heading": item.level < 2 }}>
+              <Show
+                when={item.selectable}
+                fallback={<span>{item.text}</span>}
+              >
+                <button
+                  type="button"
+                  class="menu-item-button"
+                  classList={{ selected: item.index === props.menu.lastHovered }}
+                  onFocus={() => focus(item)}
+                  onPointerEnter={() => focus(item)}
+                  onClick={() => choose(item)}
+                >
+                  <Show when={item.hotkeys.length > 0}>
+                    <span class="menu-hotkeys">{formatHotkeys(item.hotkeys)}</span>
+                  </Show>
+                  <span>{item.text}</span>
+                </button>
+              </Show>
+            </li>
+          )}
+        </For>
+      </ol>
+      <Show when={props.menu.more || props.menu.altMore}>
+        <p class="status-line">{props.menu.more || props.menu.altMore}</p>
+      </Show>
     </section>
   );
+}
+
+function InventoryPanel(props: {
+  inventory: InventoryItem[];
+  player: AccessibleGameState["player"];
+  send: (message: OutgoingMessage) => void;
+}) {
+  const actionItems = () => props.inventory
+    .filter((item) => item.actionPanelOrder !== null && item.actionPanelOrder >= 0)
+    .sort((left, right) => (
+      (left.actionPanelOrder ?? 0) - (right.actionPanelOrder ?? 0)
+      || left.subType - right.subType
+      || left.slot - right.slot
+    ));
+
+  return (
+    <section class="inventory-panel panel" aria-labelledby="inventory-title">
+      <div class="inventory-heading">
+        <div>
+          <h2 id="inventory-title">Inventory</h2>
+          <p class="status-line">
+            {props.inventory.length} item{props.inventory.length === 1 ? "" : "s"}
+            <Show when={props.player?.quiver}>. Quiver: {props.player?.quiver}</Show>
+          </p>
+        </div>
+        <button type="button" onClick={() => props.send({ msg: "main_menu_action" })}>
+          Main menu
+        </button>
+      </div>
+
+      <Show
+        when={actionItems().length > 0}
+        fallback={<p class="status-line">No quick actions are available yet. Press i for the full inventory menu.</p>}
+      >
+        <ul class="inventory-list" aria-label="Quick inventory actions">
+          <For each={actionItems()}>
+            {(item) => (
+              <li classList={{ useless: item.useless }}>
+                <div class="inventory-item-main">
+                  <span class="inventory-letter">{item.letter}</span>
+                  <span>{inventoryItemLabel(item, props.player)}</span>
+                </div>
+                <div class="inventory-actions">
+                  <button
+                    type="button"
+                    onClick={() => props.send({ msg: "inv_item_action", slot: item.slot })}
+                  >
+                    {item.actionVerb || "Use"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => props.send({ msg: "inv_item_describe", slot: item.slot })}
+                  >
+                    Describe
+                  </button>
+                </div>
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
+    </section>
+  );
+}
+
+function inventoryItemLabel(item: InventoryItem, player: AccessibleGameState["player"]): string {
+  const markers = [
+    player?.weaponSlot === item.slot ? "wielded" : "",
+    player?.offhandSlot === item.slot ? "offhand" : "",
+    player?.quiverSlot === item.slot ? "quivered" : ""
+  ].filter(Boolean);
+  const quantity = item.quantityLabel && item.quantityLabel !== "1" ? `${item.quantityLabel} ` : "";
+  return `${quantity}${item.name}${markers.length > 0 ? ` (${markers.join(", ")})` : ""}`;
+}
+
+function formatHotkeys(hotkeys: number[]): string {
+  return hotkeys.map((hotkey) => hotkey >= 32 && hotkey <= 126
+    ? String.fromCharCode(hotkey)
+    : hotkey === 13 ? "Enter" : String(hotkey)
+  ).join(", ");
+}
+
+function PlayerPanel(props: {
+  player: NonNullable<AccessibleGameState["player"]>;
+  inventory: InventoryItem[];
+}) {
+  const speciesGod = () => [props.player.species, props.player.god].filter(Boolean).join(" of ");
+  const weapon = () => inventorySlotLabel(props.inventory, props.player.weaponSlot) || "Unarmed";
+  const offhand = () => inventorySlotLabel(props.inventory, props.player.offhandSlot);
+  const quiver = () => props.player.quiver || inventorySlotLabel(props.inventory, props.player.quiverSlot);
+
+  return (
+    <section class="webtiles-stats" aria-labelledby="player-title">
+      <h2 id="player-title" class="sr-only">Player</h2>
+      <div class="stats-titleline">
+        <span>{props.player.name}</span>
+        <Show when={props.player.job}> <span>{props.player.job}</span></Show>
+      </div>
+      <Show when={speciesGod()}>
+        <div class="stats-species-god">{speciesGod()}</div>
+      </Show>
+      <div class="stats-line">
+        <span class="stats-caption">HP:</span> <span>{props.player.hp}</span>
+        <span class="stats-bar stats-hp-bar" aria-hidden="true"><span /></span>
+      </div>
+      <Show when={props.player.mp}>
+        <div class="stats-line">
+          <span class="stats-caption">Magic:</span> <span>{props.player.mp}</span>
+          <span class="stats-bar stats-mp-bar" aria-hidden="true"><span /></span>
+        </div>
+      </Show>
+      <div class="stats-columns">
+        <div>
+          <div><span class="stats-caption">AC:</span> {props.player.ac}</div>
+          <div><span class="stats-caption">EV:</span> {props.player.ev}</div>
+          <div><span class="stats-caption">SH:</span> {props.player.sh}</div>
+          <div><span class="stats-caption">XL:</span> {props.player.xl} <span class="stats-caption">Next:</span> {props.player.progress}%</div>
+        </div>
+        <div>
+          <div><span class="stats-caption">Str:</span> {props.player.str}</div>
+          <div><span class="stats-caption">Int:</span> {props.player.int}</div>
+          <div><span class="stats-caption">Dex:</span> {props.player.dex}</div>
+          <div><span class="stats-caption">Place:</span> {props.player.place}</div>
+          <div><span class="stats-caption">Turn:</span> {props.player.turn}</div>
+        </div>
+      </div>
+      <div class="stats-equipment"><span class="stats-caption">{slotLetter(props.player.weaponSlot)})</span> {weapon()}</div>
+      <Show when={offhand()}>
+        <div class="stats-equipment"><span class="stats-caption">{slotLetter(props.player.offhandSlot)})</span> {offhand()}</div>
+      </Show>
+      <Show when={quiver()}>
+        <div class="stats-equipment"><span class="stats-caption">Q:</span> {quiver()}</div>
+      </Show>
+    </section>
+  );
+}
+
+function inventorySlotLabel(inventory: InventoryItem[], slot: number | null): string {
+  if (slot === null || slot < 0) {
+    return "";
+  }
+  return inventory.find((item) => item.slot === slot)?.name ?? "";
+}
+
+function slotLetter(slot: number | null): string {
+  if (slot === null || slot < 0) {
+    return "-";
+  }
+  return slot < 26
+    ? String.fromCharCode("a".charCodeAt(0) + slot)
+    : String.fromCharCode("A".charCodeAt(0) + slot - 26);
 }
 
 function GameTextAreas(props: { textAreas: AccessibleGameState["textAreas"] }) {
@@ -461,7 +802,7 @@ function GameTextAreas(props: { textAreas: AccessibleGameState["textAreas"] }) {
     .sort(([left], [right]) => left.localeCompare(right));
 
   return (
-    <Show when={entries().length > 0} fallback={<p class="status-line">No active text overlay.</p>}>
+    <Show when={entries().length > 0}>
       <div class="text-areas">
         <For each={entries()}>
           {([id, lines]) => (
@@ -476,17 +817,101 @@ function GameTextAreas(props: { textAreas: AccessibleGameState["textAreas"] }) {
   );
 }
 
-function MessagesPanel(props: { state: AccessibleGameState }) {
+function MessagesPanel(props: {
+  state: AccessibleGameState;
+  onOpenHistory: () => void;
+}) {
+  const recentMessages = () => props.state.messages.slice(-8);
+
   return (
     <section class="panel" aria-labelledby="messages-title">
-      <h2 id="messages-title">Messages</h2>
+      <div class="messages-heading">
+        <div>
+          <h2 id="messages-title">Messages</h2>
+          <p class="status-line">{props.state.messages.length} messages in history</p>
+        </div>
+        <button type="button" onClick={props.onOpenHistory}>Open history</button>
+      </div>
       <Show when={props.state.morePrompt}>
         <p role="status">{props.state.morePrompt}</p>
       </Show>
-      <div class="messages" role="log" aria-live="off" aria-relevant="additions">
-        <For each={props.state.messages}>
+      <div class="messages" role="log" aria-live="off" aria-relevant="additions" aria-label="Recent messages">
+        <For each={recentMessages()}>
           {(message) => <p class="message">{message.text}</p>}
         </For>
+      </div>
+    </section>
+  );
+}
+
+function MessageHistoryDialog(props: {
+  messages: AccessibleGameState["messages"];
+  query: string;
+  setQuery: (value: string) => void;
+  onClose: () => void;
+}) {
+  let searchRef: HTMLInputElement | undefined;
+  const normalizedQuery = () => props.query.trim().toLowerCase();
+  const filteredMessages = createMemo(() => {
+    const query = normalizedQuery();
+    const messages = query
+      ? props.messages.filter((message) => message.text.toLowerCase().includes(query))
+      : props.messages;
+    return [...messages].reverse();
+  });
+
+  createEffect(() => {
+    queueMicrotask(() => searchRef?.focus());
+  });
+
+  return (
+    <section
+      class="history-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="history-title"
+      aria-describedby="history-summary"
+    >
+      <div class="history-card panel">
+        <div class="history-heading">
+          <div>
+            <h2 id="history-title">Message History</h2>
+            <p id="history-summary" class="status-line">
+              Showing {filteredMessages().length} of {props.messages.length} messages, newest first.
+            </p>
+          </div>
+          <button type="button" onClick={props.onClose}>Close history</button>
+        </div>
+
+        <div class="history-search">
+          <label for="history-search">Search message history</label>
+          <input
+            ref={(element) => { searchRef = element; }}
+            id="history-search"
+            type="search"
+            autocomplete="off"
+            value={props.query}
+            onInput={(event) => props.setQuery(event.currentTarget.value)}
+          />
+        </div>
+
+        <div class="history-list-frame" tabindex="0" role="region" aria-label="Scrollable message history">
+          <Show
+            when={filteredMessages().length > 0}
+            fallback={<p class="status-line">No messages match this search.</p>}
+          >
+            <ol class="history-list">
+              <For each={filteredMessages()}>
+                {(message) => (
+                  <li>
+                    <span class="history-message-number">#{message.id}</span>
+                    <span>{message.text}</span>
+                  </li>
+                )}
+              </For>
+            </ol>
+          </Show>
+        </div>
       </div>
     </section>
   );
@@ -534,7 +959,8 @@ function RunningGamesPanel(props: {
 function tileMapLabel(state: AccessibleGameState): string {
   const player = state.player;
   const location = player?.place ? ` at ${player.place}` : "";
-  return `Dungeon tile map centered on ${state.mapCenter.x}, ${state.mapCenter.y}${location}.`;
+  const cursor = state.activeCursor ? ` Cursor at ${state.activeCursor.x}, ${state.activeCursor.y}.` : "";
+  return `Dungeon tile map centered on ${state.mapCenter.x}, ${state.mapCenter.y}${location}.${cursor}`;
 }
 
 function textAreaHeadingId(id: string): string {
@@ -675,4 +1101,60 @@ function isTextInput(target: EventTarget | null): boolean {
     || target instanceof HTMLTextAreaElement
     || target instanceof HTMLSelectElement
     || target.isContentEditable;
+}
+
+function isButtonActivation(event: KeyboardEvent): boolean {
+  return event.target instanceof HTMLButtonElement && (event.key === "Enter" || event.key === " ");
+}
+
+function isNativeControlActivation(event: KeyboardEvent): boolean {
+  if (!(event.target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const control = event.target.closest("button,a,[role='button'],[role='link']");
+  if (!control) {
+    return false;
+  }
+
+  return event.key === "Enter" || event.key === " ";
+}
+
+function gameUiHotkeyCode(event: KeyboardEvent, panels: GameUiPanelData[]): number | null {
+  if (event.ctrlKey || event.altKey || event.metaKey) {
+    return null;
+  }
+
+  const keycode = utf8FromKeyValue(event.key);
+  if (keycode === 0) {
+    return null;
+  }
+
+  const topPanel = panels.at(-1);
+  if (!topPanel) {
+    return null;
+  }
+
+  for (const group of topPanel.groups) {
+    if (group.buttons.some((button) => button.hotkey === keycode)) {
+      return keycode;
+    }
+  }
+  return null;
+}
+
+function utf8FromKeyValue(key: string): number {
+  if (key.length === 1) {
+    return key.charCodeAt(0);
+  }
+  switch (key) {
+    case "Tab":
+      return 9;
+    case "Enter":
+      return 13;
+    case "Escape":
+      return 27;
+    default:
+      return 0;
+  }
 }

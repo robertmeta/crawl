@@ -73,16 +73,22 @@ class AccessibleMainHandler(MainHandler):
         else:
             protocol = "ws://"
 
+        accessible_client_dev_server = config.get("accessible_client_dev_server")
+        if accessible_client_dev_server:
+            accessible_client_dev_server = accessible_client_dev_server.rstrip("/")
+
         asset_version = _crawl_version
-        try:
-            app_path = os.path.join(config.get('static_path'), "accessible", "app.js")
-            asset_version = "%s-%d" % (_crawl_version, int(os.path.getmtime(app_path)))
-        except OSError:
-            pass
+        if not accessible_client_dev_server:
+            try:
+                app_path = os.path.join(config.get('static_path'), "accessible", "app.js")
+                asset_version = "%s-%d" % (_crawl_version, int(os.path.getmtime(app_path)))
+            except OSError:
+                pass
 
         self.render("accessible_client.html",
                     socket_server = protocol + host + "/socket",
                     game_version = _crawl_version,
+                    accessible_client_dev_server = accessible_client_dev_server,
                     asset_version = asset_version)
 
 class NoCacheHandler(tornado.web.StaticFileHandler):

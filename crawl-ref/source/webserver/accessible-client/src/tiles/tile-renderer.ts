@@ -8,6 +8,7 @@ export type TileRenderer = {
     canvas: HTMLCanvasElement,
     cells: Record<string, TileCell>,
     center: MapPoint,
+    cursor: MapPoint | null,
     revision: number
   ) => void;
 };
@@ -146,7 +147,7 @@ export async function createTileRenderer(gameDataVersion: string): Promise<TileR
   };
 
   return {
-    draw: (canvas, cells, center) => {
+    draw: (canvas, cells, center, cursor) => {
       const dpr = window.devicePixelRatio || 1;
       const width = VIEW_COLS * CELL_SIZE;
       const height = VIEW_ROWS * CELL_SIZE;
@@ -175,8 +176,27 @@ export async function createTileRenderer(gameDataVersion: string): Promise<TileR
           drawCell(ctx, cells[`${mapX},${mapY}`], col * CELL_SIZE, row * CELL_SIZE);
         }
       }
+
+      if (cursor) {
+        const cursorCol = cursor.x - originX;
+        const cursorRow = cursor.y - originY;
+        if (cursorCol >= 0 && cursorCol < VIEW_COLS && cursorRow >= 0 && cursorRow < VIEW_ROWS) {
+          drawCursor(ctx, cursorCol * CELL_SIZE, cursorRow * CELL_SIZE);
+        }
+      }
     }
   };
+}
+
+function drawCursor(ctx: CanvasRenderingContext2D, x: number, y: number) {
+  ctx.save();
+  ctx.strokeStyle = "#f7ff6a";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(x + 2, y + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.8)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 5, y + 5, CELL_SIZE - 10, CELL_SIZE - 10);
+  ctx.restore();
 }
 
 function drawGlyphFallback(ctx: CanvasRenderingContext2D, cell: TileCell | undefined, x: number, y: number) {
